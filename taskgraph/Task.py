@@ -2,6 +2,7 @@
 import collections
 import hashlib
 import inspect
+import json
 import logging
 import logging.handlers
 import multiprocessing
@@ -166,13 +167,22 @@ def _create_taskgraph_table_schema(taskgraph_database_path):
             value BLOB,
             PRIMARY KEY (key)
         );
+        CREATE TABLE target_files (
+            filepath TEXT NOT NULL,
+            args_list TEXT NOT NULL,
+            kwargs_dict TEXT NOT NULL,
+            function_name TEXT NOT NULL,
+            PRIMARY KEY (filepath)
+        );
         """)
 
     table_valid = True
     expected_table_column_name_map = {
         'taskgraph_data': [
             'task_reexecution_hash', 'target_path_stats', 'result'],
-        'global_variables': ['key', 'value']}
+        'global_variables': ['key', 'value'],
+        'target_files': ['filepath', 'args_list', 'kwargs_dict', 'function_name']
+        }
     if os.path.exists(taskgraph_database_path):
         try:
             # check that the tables exist and the column names are as expected
@@ -1134,6 +1144,17 @@ class Task(object):
                     self._task_reexecution_hash,
                     pickle.dumps(result_target_path_stats),
                     pickle.dumps(self._result)))
+            args_list_str = json.dumps(self._args, default=lambda x: 'not serializable')
+            kwargs_dict_str = json.dumps(self._kwargs, default=lambda x: 'not serializable')
+            for target_path in self._target_path_list:
+                _execute_sqlite(
+                    "INSERT OR REPLACE INTO target_files VALUES (?, ?, ?, ?)",
+                    self._task_database_path, mode='modify',
+                    argument_list=(
+                        target_path,
+                        args_list_str,
+                        kwargs_dict_str,
+                        f'{self._func.__module__}.{self._func.__name__}'))
         self.task_done_executing_event.set()
         LOGGER.debug("successful run on task %s", self.task_name)
 
