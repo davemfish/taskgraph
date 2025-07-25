@@ -1002,12 +1002,12 @@ class Task(object):
                 "been changed with another function without __name__.")
             self._func.__name__ = ''
 
-        args_clean = []
+        self.args_clean = []
         for index, arg in enumerate(self._args):
             try:
                 scrubbed_value = _scrub_task_args(arg, self._target_path_list)
                 _ = pickle.dumps(scrubbed_value)
-                args_clean.append(scrubbed_value)
+                self.args_clean.append(scrubbed_value)
             except TypeError:
                 LOGGER.warning(
                     "could not pickle argument at index %d (%s). "
@@ -1015,14 +1015,14 @@ class Task(object):
                     "when calculating whether inputs have been changed "
                     "on a successive run.", index, arg)
 
-        kwargs_clean = {}
+        self.kwargs_clean = {}
         # iterate through sorted order so we get the same hash result with the
         # same set of kwargs irrespective of the item dict order.
         for key, arg in sorted(self._kwargs.items()):
             try:
                 scrubbed_value = _scrub_task_args(arg, self._target_path_list)
                 _ = pickle.dumps(scrubbed_value)
-                kwargs_clean[key] = scrubbed_value
+                self.kwargs_clean[key] = scrubbed_value
             except TypeError:
                 LOGGER.warning(
                     "could not pickle kw argument %s (%s) scrubbed to %s. "
@@ -1032,8 +1032,8 @@ class Task(object):
 
         self._reexecution_info = {
             'func_name': self._func.__name__,
-            'args_clean': args_clean,
-            'kwargs_clean': kwargs_clean,
+            'args_clean': self.args_clean,
+            'kwargs_clean': self.kwargs_clean,
             'source_code_hash': hashlib.sha1(
                 source_code.encode('utf-8')).hexdigest(),
         }
@@ -1144,16 +1144,28 @@ class Task(object):
                     self._task_reexecution_hash,
                     pickle.dumps(result_target_path_stats),
                     pickle.dumps(self._result)))
-            args_list_str = json.dumps(self._args, default=lambda x: 'not serializable')
-            kwargs_dict_str = json.dumps(self._kwargs, default=lambda x: 'not serializable')
+            # This first case could be handled by a default fallback serializer
+            # TypeError: Object of type int64 is not JSON serializable
+            # This second case could be handled by a custom encoder
+            # TypeError: keys must be str, int, float, bool or None, not numpy.int64
+            try:
+                args_clean_str = json.dumps(self.args_clean)
+            except TypeError:
+                args_clean_str = 'not serializable'
+            try:
+                kwargs_clean_str = json.dumps(self.kwargs_clean)
+            except TypeError:
+                kwargs_clean_str = 'not serializable'
+
             for target_path in self._target_path_list:
+                target_path = r"{}".format(target_path).replace('\\', '/')
                 _execute_sqlite(
                     "INSERT OR REPLACE INTO target_files VALUES (?, ?, ?, ?)",
                     self._task_database_path, mode='modify',
                     argument_list=(
                         target_path,
-                        args_list_str,
-                        kwargs_dict_str,
+                        args_clean_str,
+                        kwargs_clean_str,
                         f'{self._func.__module__}.{self._func.__name__}'))
         self.task_done_executing_event.set()
         LOGGER.debug("successful run on task %s", self.task_name)
